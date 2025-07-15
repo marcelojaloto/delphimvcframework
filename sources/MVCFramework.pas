@@ -1094,6 +1094,7 @@ type
     fOnRouterLog: TMVCRouterLogHandlerProc;
     fWebContextCreateEvent: TWebContextCreateEvent;
     fWebContextDestroyEvent: TWebContextDestroyEvent;
+	fLoggerTag: String;
     procedure FillActualParamsForAction(const ASelectedController: TMVCController;
       const AContext: TWebContext; const AActionFormalParams: TArray<TRttiParameter>;
       const AActionName: string; var AActualParams: TArray<TValue>; out ABodyParameter: TObject);
@@ -1172,6 +1173,7 @@ type
     property Middlewares: TList<IMVCMiddleware> read FMiddlewares;
     property Controllers: TObjectList<TMVCControllerDelegate> read FControllers;
     property OnRouterLog: TMVCRouterLogHandlerProc read fOnRouterLog write fOnRouterLog;
+	property LoggerTag: String read fLoggerTag write fLoggerTag;
   end;
 
   TMVCErrorResponseItem = class
@@ -2044,7 +2046,7 @@ begin
       end;
       on E: Exception do
       begin
-        LogException(E, '');
+        LogE(E.ClassName + ': ' + E.Message);
       end;
     end;
   end;
@@ -2549,7 +2551,7 @@ end;
 
 procedure TMVCEngine.ConfigDefaultValues;
 begin
-  LogI('Loading Config default values');
+  Log.Info('Loading Config default values', fLoggerTag);
 
   Config[TMVCConfigKey.DefaultContentType] := TMVCConstants.DEFAULT_CONTENT_TYPE;
   Config[TMVCConfigKey.DefaultContentCharset] := TMVCConstants.DEFAULT_CONTENT_CHARSET;
@@ -2578,19 +2580,19 @@ begin
         rlsRouteFound:
           begin
             if lStatusCode < HTTP_STATUS.InternalServerError then
-              LogI(Context.Request.HTTPMethodAsString + ':' +
+              Log.Info(Context.Request.HTTPMethodAsString + ':' +
                 Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> ' +
-                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode))
+                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode), fLoggerTag)
             else
-              LogE(Context.Request.HTTPMethodAsString + ':' +
+              Log.Error(Context.Request.HTTPMethodAsString + ':' +
                 Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> ' +
-                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode))
+                Sender.GetQualifiedActionName + ' - ' + IntToStr(lStatusCode), fLoggerTag)
           end;
         rlsRouteNotFound:
           begin
-            LogW(Context.Request.HTTPMethodAsString + ':' +
+            Log.Warn(Context.Request.HTTPMethodAsString + ':' +
               Context.Request.PathInfo + ' [' + Context.Request.ClientIp + '] -> {ROUTE NOT FOUND} - ' +
-              IntToStr(Context.Response.StatusCode));
+              IntToStr(Context.Response.StatusCode), fLoggerTag);
           end;
       else
         raise EMVCException.Create('Invalid RouterLogState');
@@ -2601,6 +2603,7 @@ end;
 constructor TMVCEngine.Create(const AWebModule: TWebModule; const AConfigAction: TProc<TMVCConfig>);
 begin
   inherited Create(AWebModule);
+  fLoggerTag := LOGGERPRO_TAG;  
   FWebModule := AWebModule;
   FixUpWebModule;
   FConfig := TMVCConfig.Create;
@@ -2818,7 +2821,7 @@ begin
                   on Ex: Exception do
                   begin
                     Log.Error('[%s] %s [PathInfo "%s"] (Custom message: "%s")',
-                      [Ex.Classname, Ex.Message, GetRequestShortDescription(ARequest), 'Cannot create controller'], LOGGERPRO_TAG);
+                      [Ex.Classname, Ex.Message, GetRequestShortDescription(ARequest), 'Cannot create controller'], fLoggerTag);
                     raise EMVCException.Create(http_status.InternalServerError,
                       'Cannot create controller (see log for more info)');
                   end;
@@ -2974,8 +2977,8 @@ begin
                     except
                       on E: Exception do
                       begin
-                        LogE(Format('Cannot free Body object: [CLS: %s][MSG: %s]',
-                          [E.Classname, E.Message]));
+                        Log.Error(Format('Cannot free Body object: [CLS: %s][MSG: %s]',
+                          [E.Classname, E.Message]), fLoggerTag);
                       end;
                     end;
                     lSelectedController.MVCControllerBeforeDestroy;
@@ -3021,7 +3024,7 @@ begin
                     E.HTTPStatusCode,
                     HTTP_STATUS.ReasonStringFor(E.HTTPStatusCode),
                     E.DetailedMessage
-                  ], LOGGERPRO_TAG);
+                  ], fLoggerTag);
 //                if lContext.SessionStarted then
 //                begin
 //                  lContext.SessionStop;
@@ -3058,7 +3061,7 @@ begin
                     lRespStatus,
                     HTTP_STATUS.ReasonStringFor(lRespStatus),
                     'Global Action Exception Handler'
-                  ], LOGGERPRO_TAG);
+                  ], fLoggerTag);
                 if Assigned(lSelectedController) then
                 begin
                   lSelectedController.ResponseStatus(lRespStatus);
@@ -3088,7 +3091,7 @@ begin
                     HTTP_STATUS.InternalServerError,
                     HTTP_STATUS.ReasonStringFor(HTTP_STATUS.InternalServerError),
                     'After Routing Exception Handler'
-                  ], LOGGERPRO_TAG);
+                  ], fLoggerTag);
                 if Assigned(lSelectedController) then
                 begin
                   { middlewares *must* not raise unhandled exceptions }
@@ -3594,7 +3597,7 @@ procedure TMVCEngine.LoadSystemControllers;
 begin
   if FConfig[TMVCConfigKey.LoadSystemControllers] = 'true' then
   begin
-    LogI('Loading System Controllers');
+    Log.Info('Loading System Controllers', fLoggerTag);
     AddController(TMVCSystemController);
   end;
 end;
@@ -3628,7 +3631,7 @@ begin
     except
       on E: Exception do
       begin
-        Log.Error('[%s] %s', [E.Classname, E.Message], LOGGERPRO_TAG);
+        Log.Error('[%s] %s', [E.Classname, E.Message], fLoggerTag);
 
         AResponse.StatusCode := http_status.InternalServerError; // default is Internal Server Error
         if E is EMVCException then
