@@ -127,6 +127,46 @@ certificate you cannot fix.
 
 ### Added
 
+- **OpenAPI 3 from the Swagger middleware.** `TMVCSwaggerMiddleware` and the
+  `Swagger(...)` HTTP filter take a new optional last parameter,
+  `ASpecVersion: TMVCSwaggerSpecVersion = ssvSwagger2`
+  (`MVCFramework.Swagger.Commons`). With `ssvOpenAPI3` the same URL serves an
+  OpenAPI 3 document (`"openapi": "3.2.1"`, built by SwagDoc) with every
+  feature of the middleware: JWT and basic security, `MVCSwagAuthentication`,
+  `MVCRequiresAuthentication`, `MVCSwagJSONSchemaField`, `MVCSWAGDefaultModel`
+  and the `TMVCActiveRecordController` CRUD paths. The JWT scheme is
+  `http`/`bearer`/`JWT`, so Swagger UI's Authorize box takes the raw token.
+  Unless the application passes `AHost`, the document's server is relative
+  (`"servers": [{"url": "<basePath>"}]`): "Try it out" calls the origin that
+  served the document. Swagger 2.0 stays the default (for the two fixes
+  that touch it see **Fixed**).
+- **The IDE wizard generates API documentation.** New option "API
+  documentation (OpenAPI 3)", on by default for RESTful, Full-Stack, Custom
+  and Minimal API RESTful projects. Controller projects register the Swagger
+  middleware with OpenAPI 3; Minimal API projects register the `OpenAPI(...)`
+  filter. Both publish the document at `/openapi.json` and serve Swagger UI
+  at `/swagger`, both published only when `.env` sets
+  `dmvc.openapi.enabled=true`. The generated `.env` sets it; without the key
+  (e.g. in production) no documentation is published. The wizard downloads the official Swagger UI release (5.33.0,
+  SHA-256 verified) into `bin\www\swagger` while it creates the project,
+  showing a progress dialog that can be cancelled and gives up after 30
+  seconds. Without network access the project is still created and the
+  folder contains a README with the download steps. When the documentation
+  is published, the console shows the Swagger UI URL at startup.
+- **The IDE wizard writes a JWT signing key into the generated `.env`.**
+  Projects with JWT (HMAC) get their own `JWT_SECRET`, 384 random bits from
+  the system CSPRNG, drawn at every generation, so a new project starts
+  without editing `.env` first. The generated `.gitignore` already excludes
+  `.env`.
+- **Web Application projects from the IDE wizard start from a fuller UI.**
+  The TemplatePro views have a page header, a live server panel and a
+  "Start here" list on the home page, drawn icons, themed selection and focus,
+  and a new **People** page (`/web/people`) that shows how to render a table:
+  the controller filters and sorts a list of objects from the query string,
+  `people/table.html` loops over it (`@@index`, filters, the `else` branch as
+  empty state, macros for the sortable headers), and with HTMX only the table
+  is replaced while the address bar keeps a shareable URL. Without HTMX the
+  same templates work as plain GET forms and links.
 - **The `QUERY` HTTP method (RFC 10008).** `QUERY` is safe and idempotent
   like `GET`, but it carries a request body: the query travels in the
   payload instead of the URL, so it is not URL-length limited and does not
@@ -173,7 +213,8 @@ certificate you cannot fix.
     `POST` one does.
   - **Documentation:** `QUERY` does not appear in the generated Swagger or
     OpenAPI output. The `query` path-item slot only exists in OpenAPI 3.2;
-    SwagDoc emits OpenAPI 2 and the native emitter targets 3.1. Both skip
+    the Swagger middleware (Swagger 2.0, or OpenAPI 3 through SwagDoc) and
+    the native emitter (3.1) do not map it. Both skip
     the verb rather than writing an invalid document. This lands with the
     OpenAPI 3.2 emitter in 4.0.
   - **Hosts:** verified end to end on Indy Direct, HTTP.sys, WebBroker,
@@ -286,6 +327,17 @@ certificate you cannot fix.
 
 ### Changed
 
+- **Native OpenAPI emitter (`OpenAPI(...)` filter, `TMVCOpenAPI3Middleware`):**
+  - schema property names are the JSON names the serializer writes
+    (`MVCNameAs`, `MVCNameCase`, `MVCNameCaseDefault`); members marked
+    `MVCDoNotSerialize` are left out;
+  - `Produces<T>` describes the `{"data": T}` envelope that `Ok(object)`
+    renders;
+  - nullable fields use the OpenAPI 3.1 form (`"type": [..., "null"]`)
+    instead of the 3.0 keyword `nullable`;
+  - on controllers, a path parameter with the `sqids` converter is a string,
+    and action parameters match path placeholders ignoring case (`id` and
+    `($ID)` are one path parameter).
 - **`TMVCHTTPMethodType` has a ninth member, `httpQUERY`.** It is appended
   at the end of the enumeration, so no existing ordinal moved and no
   persisted value changed meaning. Two consequences:
@@ -298,10 +350,38 @@ certificate you cannot fix.
     `TRACE`; `QUERY` opens no surface that was not already open. Declare
     `[MVCHTTPMethod([...])]` if you want the route narrowed.
 
+- **`foRefresh` on SQL Server returns the row as it is after the triggers.**
+  SQL Server has no BEFORE triggers, and `OUTPUT` reports the row before the
+  AFTER triggers run, so a column written by a trigger came back stale. After
+  an Insert or Update the row is now selected again by key, in the same batch.
+  Same round trip as before, plus one primary-key lookup.
+- **SQL Server: an auto-generated integer key that is not an IDENTITY now
+  raises on Insert** (`SCOPE_IDENTITY() is NULL ...`) instead of silently
+  leaving the in-memory key at 0. The row is inserted before the error. GUID
+  and string keys filled by a `DEFAULT` are read back through
+  `OUTPUT ... INTO` a table variable and work.
+- **RQL `limit(n,0)` / `MaxRecordCount = 0` on SQL Server returns an empty
+  list** instead of raising `SQL Server rejects "FETCH NEXT 0 ROWS"`, as
+  `LIMIT 0` does on the other engines.
+
 - Default `TGUID` serialisation format is now dashes-only (RFC 4122)
   instead of `{braces}`. See **BREAKING CHANGES** above for migration.
 - `TDate` / `TDateTime` / `TTime` zero no longer serialises as JSON
   `null`. See **BREAKING CHANGES** above for migration.
+- **Swagger: date fields use the standard formats.** In the generated
+  `swagger.json`, `TDate` fields are described as `"format": "date"` and
+  `TDateTime` fields as `"format": "date-time"` and `TTime` fields as
+  `"format": "time"`, instead of the literal patterns `"yyyy-MM-dd"`,
+  `"yyyy-MM-ddTHH:mm:ss"` and `"HH:mm:ss"` (Nullable types included). These
+  are the formats
+  defined by the specification, so Swagger UI and client generators now
+  recognise them: a client regenerated from the document gets date types
+  where it used to get plain strings. The basic security scheme now also
+  carries its `description`. (SwagDoc update, PR #916 by Marcelo Jaloto.)
+- **Swagger documentation attributes renamed to `MVCSwag*`.** The
+  field-documentation attributes live in `MVCFramework.Swagger.Commons` as
+  `MVCSwagFormat`, `MVCSwagMaxLength`, `MVCSwagMinimum`, `MVCSwagMaximum`
+  and `MVCSwagPattern`, alongside the other `MVCSwag*` attributes.
 
 ### Security
 
@@ -526,6 +606,24 @@ written case-insensitively. Check the rules in front of a DMVCFramework server.
   deserialized lists to `TMVCActiveRecord.Merge`, which matches rows by primary
   key, remove the attribute.
 
+**WebSocket server: limits against unauthenticated peers** (PR #915)
+
+A peer could pin a server thread forever by opening the socket and never
+finishing the upgrade handshake, or make the server try to allocate up to 2^63
+bytes with one 14-byte frame header. `TMVCWebSocketServer` has four new
+properties, **on by default** (0 disables each one):
+
+| Property | Default |
+|---|---|
+| `MaxPayloadLength` | 16 MB, checked before the payload buffer is allocated |
+| `HandshakeTimeoutMs` | 5000 |
+| `MaxHandshakeHeaders` | 64 |
+| `FrameReadTimeoutMs` | 30000, only while a frame that has started is being read |
+
+Idle connected clients are not affected. A connection that fails the handshake
+or breaks the protocol is now closed; before, Indy re-entered the handshake on
+the same socket.
+
 ### Deprecated
 
 - **`TMVCListener` / `TMVCListenerProperties` / `TMVCListenersContext`**
@@ -536,8 +634,60 @@ written case-insensitively. Check the rules in front of a DMVCFramework server.
   `IMVCServer` (`MVCFramework.Server.Factory`) instead, which also gives you
   the HTTP.sys / WebBroker backends and built-in HTTPS. Existing code keeps
   compiling with a deprecation warning until you migrate.
+- **`MVCFormat`, `MVCMinimum`, `MVCMaximum`** (the Swagger documentation
+  attributes declared in `MVCFramework`) are deprecated aliases of
+  `MVCSwagFormat`, `MVCSwagMinimum` and `MVCSwagMaximum`
+  (`MVCFramework.Swagger.Commons`) and **will be removed in 4.0**. Existing
+  code keeps compiling with a deprecation warning.
 
 ### Fixed
+
+- **TemplatePro: more dataset field types, unsigned values.** Fields of type
+  `ftShortint`, `ftByte`, `ftLongWord`, `ftExtended`, `ftGuid`, `ftFixedChar`,
+  `ftFixedWideChar` and (Delphi 13+) `ftLargeUint` can be used in views, and
+  unsigned values above the signed maximum no longer render as negative
+  numbers. Contributed by Patrick Premartin.
+- **`OKResponse(StrDict(...))` returned `{"data":{}}`.** The streaming fast
+  path of `OKResponse(TObject)` walked the properties of any class, so a
+  class with its own type serializer (`TMVCStringDictionary`, user-registered
+  ones) came out as an empty object. Such classes now go through their
+  serializer again, as a root object and as list items.
+- **`[MVCMaxLength(n)]` and `[MVCPattern(...)]` now always validate.** In a
+  unit that used `MVCFramework`, Delphi resolved them to the Swagger
+  documentation attributes `MVCFramework.MVCMaxLengthAttribute` /
+  `MVCPatternAttribute` instead of the validators in
+  `MVCFramework.Validators`, silently and whatever the order of the uses
+  clause, so the validation never ran. Those two documentation attributes
+  have been removed (use `MVCSwagMaxLength` / `MVCSwagPattern` for Swagger
+  documentation): the names now always mean the validators. Models that
+  declared them in such a unit start validating after the upgrade.
+- **Swagger document `host` on Indy Direct and HTTP.sys:** it contained the
+  port twice (`"localhost:8080:8080"`), which made the document invalid, and
+  behind a proxy or a port mapping it mixed two ports (`"localhost:9090:8080"`).
+  The port is now added only when the Host header has none. WebBroker output
+  is unchanged; so is any application that passes `AHost`.
+- **Swagger middleware, paths with a parameter converter** (`($ID:sqids)`):
+  the converter stayed in the documented path literally. The path is now
+  `{ID}` with a string path parameter.
+- **SQL Server: Insert and Update failed on a table with enabled triggers**
+  whenever something had to be read back (the generated key, a `foRefresh`
+  field): SQL Server rejects `OUTPUT inserted.col` without `INTO` there.
+  Diagnosis: Flavio Basile.
+- **SQL Server: optimistic locking was not detected behind a trigger without
+  `SET NOCOUNT ON`.** The driver reported the trigger's row count, so a stale
+  `foVersion` Update, or an Update/Delete of a missing row, looked successful.
+  Framework statements now read `@@ROWCOUNT` right after the statement
+  (`TMVCSQLGenerator.GetRowsAffectedSQL`, empty on every other engine).
+- **`Delete`, `DeleteRQL`, `DeleteAll`, `HardDeleteRQL` and `RestoreRQL`
+  failed on any engine for a class with `foRefresh` fields** (FireDAC -308):
+  the refresh read-back now runs only for the entity's own Insert and Update.
+- **A `TGUID` auto-generated primary key stayed empty after Insert**, on
+  every engine.
+- **SQL Server Insert did not quote table and column names**: a column with a
+  space in its name broke the statement.
+- **Delphi 13.2: `MVCFramework.ActiveRecord.pas` did not compile** (E2010, #917),
+  and `MVCFramework.JWT.RSA.pas` did not compile against TaurusTLS after its
+  PR #278.
 
 - **HTTP.sys dispatched `SEARCH` - and a dozen other verbs - as `GET`.**
   The HTTP.sys request adapter mapped the kernel's `HTTP_VERB` enumeration
